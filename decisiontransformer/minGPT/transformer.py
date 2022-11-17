@@ -94,7 +94,6 @@ class minGPT(nn.Module):
         config["n_head"] = None
         config["n_embd"] =  None
         # these options must be filled in externally
-        config["vocab_size"] = None
         config["block_size"] = None
         # dropout hyperparameters
         config["embd_pdrop"] = 0.1

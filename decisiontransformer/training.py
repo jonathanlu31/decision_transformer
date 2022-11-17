@@ -23,7 +23,16 @@ class Trainer:
 
         self.iter_num = 0
         self.iter_time = 0.0
-        self.optimizer = self.model.configure_optimizers(config)
+        self.optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=config["learning_rate"],
+            weight_decay=config['weight_decay']
+        )
+        self.scheduler = torch.optim.lr_scheduler.LambdaLR(
+            self.optimizer,
+            lambda steps: min((steps+1)/config['warmup_steps'], 1)
+        )
+        # self.optimizer = self.model.configure_optimizers(config)
         self.loss_fn = loss_fn
 
     def train(self):
@@ -42,8 +51,8 @@ class Trainer:
                 batch_size=config["batch_size"],
                 num_workers=config["num_workers"],
             )
-            print(epoch)
 
+            batch_losses = []
             for batch_num, sample in enumerate(tqdm(train_loader)):
                 states, actions, returns, dones, timesteps, attn_mask = sample
                 states = states.to(dtype=torch.float, device=self.device)
@@ -62,9 +71,12 @@ class Trainer:
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
-                train_losses.append(loss.detach().cpu().item())
+                if self.scheduler is not None:
+                    self.scheduler.step()
+                batch_losses.append(loss.detach().cpu().item())
                 wandb.log({'loss': loss.item()})
-            print(train_losses[-1])
+            train_losses.extend(batch_losses)
+            print(np.mean(np.asarray(batch_losses)))
         
         self.train_losses = train_losses
         logs['time/training'] = time.time() - train_start
@@ -75,8 +87,8 @@ class Trainer:
         model.to(device=device)
         state_dim, act_dim = env.observation_space.shape[0], env.action_space.n
 
-        state_mean = torch.from_numpy(state_mean).to(device=device)
-        state_std = torch.from_numpy(state_std).to(device=device)
+        # state_mean = torch.from_numpy(state_mean).to(device=device)
+        # state_std = torch.from_numpy(state_std).to(device=device)
 
         state = env.reset()
 
@@ -86,26 +98,28 @@ class Trainer:
         actions = torch.zeros((0, act_dim), device=device, dtype=torch.float32)
         ret_to_go = torch.zeros(1, device=device, dtype=torch.float32)
         ret_to_go[0] = target_return
+        timesteps = torch.from_numpy(np.arange(200)).to(device=device, dtype=torch.float32)
 
         episode_return, episode_length = 0, 0
-        for t in range(200):
+        for t in timesteps:
 
             # add padding
             actions = torch.cat([actions, torch.zeros((1, act_dim), device=device)], dim=0)
-            ret_to_go = torch.cat([ret_to_go, torch.zeros(1, device=device)])
+            norm_state = states.to(dtype=torch.float32) # (states.to(dtype=torch.float32) - state_mean) / state_std
 
             action = model.get_action(
-                (states.to(dtype=torch.float32) - state_mean) / state_std,
+                norm_state,
                 actions.to(dtype=torch.float32),
                 ret_to_go.to(dtype=torch.float32),
-                target_return=target_return,
+                timesteps
             )
             action = action.detach().cpu().numpy()
-
-            state, reward, done, _ = env.step(action)
+            env_action = np.argmax(action)
+            state, reward, done, _ = env.step(env_action)
 
             cur_state = torch.from_numpy(state).to(device=device).reshape(1, state_dim)
             states = torch.cat([states, cur_state], dim=0)
+            ret_to_go = torch.cat([ret_to_go, torch.zeros(1, device=device)])
             ret_to_go[-1] = ret_to_go[-2] - reward
 
             episode_return += reward
@@ -118,30 +132,70 @@ class Trainer:
 
 
 def main():
+    # wandb.login()
+    # env = gym.make('CartPole-v0')
+    # print(torch.cuda.is_available())
+
+    # with wandb.init(project='decision-transformer'):
+    #     wandb.config = {
+    #         "learning_rate": 2e-4,
+    #         "epochs": 1000,
+    #         "batch_size": 64,
+    #         "hidden_size": 128,
+    #         "c_len": 4,
+    #         "device": "auto",
+    #         "weight_decay": 0.01,
+    #         "betas": (0.9, 0.999),
+    #         "num_workers": 2
+    #     }
+    #     config = wandb.config
+    #     env = gym.make('CartPole-v0')
+
+    #     state_dim = env.observation_space.shape[0]
+    #     action_dim = env.action_space.n
+    #     c_len = config["c_len"]
+
+    #     train_dataset = TrajectoryDataset('dataset', c_len, state_dim, action_dim)
+    #     # train_dataset = Subset(train_dataset, [0])
+    #     model = DecisionTransformer(state_dim, action_dim, config["hidden_size"], c_len, 200, True, n_head=1, n_layer=3, device=config["device"])
+    #     trainer = Trainer(config, model, train_dataset, loss_fn=lambda a_hat, a: torch.mean((a_hat - a)**2))
+    #     trainer.train()
     wandb.login()
     env = gym.make('CartPole-v0')
+    print(torch.cuda.is_available())
 
-    with wandb.init(project='decision-transformer'):
-        wandb.config = {
-            "learning_rate": 1e-3,
-            "epochs": 100,
-            "batch_size": 64,
-            "hidden_size": 128,
-            "c_len": 50,
-            "device": "auto",
-        }
-        config = wandb.config
+    wandb.init(project='decision-transformer')
+    wandb.run.name = 'gpt2-colab-full-clen-20-lr-1e-4'
+    wandb.config = {
+        "learning_rate": 1e-3,
+        "epochs": 500,
+        "batch_size": 64,
+        "hidden_size": 64,
+        "c_len": 20,
+        "device": "auto",
+        "weight_decay": 1e-4,
+        "betas": (0.9, 0.999),
+        "activation_function": "relu",
+        'dropout': 0.1,
+        "warmup_steps": 10000,
+        "num_workers": 0
+    }
+    config = wandb.config
+    env = gym.make('CartPole-v0')
 
-        state_dim = env.observation_space.shape[0]
-        action_dim = env.action_space.n
-        c_len = config["c_len"]
-        model = DecisionTransformer(state_dim, action_dim, config["hidden_size"], c_len, 200, action_tanh=True, n_head=1, n_layer=3)
+    state_dim = env.observation_space.shape[0]
+    action_dim = env.action_space.n
+    c_len = config["c_len"]
 
-        dataset = TrajectoryDataset('/dataset/traj_dataset.pkl', c_len, state_dim, action_dim)
-        trainer = Trainer(config, model, dataset, loss_fn=lambda a_hat, a: torch.mean((a_hat - a)**2))
-        trainer.train()
-
-        trainer.evaluate(env, dataset.state_mean, dataset.state_std)
+    train_dataset = TrajectoryDataset('dataset', c_len, state_dim, action_dim)
+    model = DecisionTransformer(state_dim, action_dim, config["hidden_size"], c_len, 200, True, n_head=1, n_layer=3, n_inner=4*config['hidden_size'],
+            activation_function=config['activation_function'],
+            n_positions=1024,
+            resid_pdrop=config['dropout'],
+            attn_pdrop=config['dropout'], device=config["device"])
+    trainer = Trainer(config, model, train_dataset, loss_fn=lambda a_hat, a: torch.mean((a_hat - a)**2))
+    trainer.train()
+    wandb.run.finish()
 
 if __name__ == '__main__':
     main()

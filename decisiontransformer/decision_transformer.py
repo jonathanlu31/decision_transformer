@@ -2,24 +2,36 @@ import numpy as np
 import torch
 import torch.nn as nn
 import transformers
-from minGPT.transformer import minGPT
+# from minGPT.transformer import minGPT
+from gpt2 import GPT2Model
 
 class DecisionTransformer(nn.Module):
-    def __init__(self, state_dim, act_dim, hidden_size, context_length, max_ep_len, action_tanh, **kwargs):
+    def __init__(self, state_dim, act_dim, hidden_size, context_length, max_ep_len, action_tanh, device, **kwargs):
         super().__init__()
         self.hidden_size = hidden_size
+        # transformer_config = transformers.GPT2Config(
+        #     vocab_size=act_dim,
+        #     n_embd=hidden_size,
+        #     block_size=context_length * 3,
+        #     **kwargs,
+        # )
         transformer_config = transformers.GPT2Config(
-            vocab_size=act_dim,
+            vocab_size=1,
             n_embd=hidden_size,
-            block_size=context_length * 3,
-            **kwargs,
+            n_ctx=context_length * 3,
+            device=device,
+            **kwargs
         )
 
         self.state_dim = state_dim
         self.act_dim = act_dim
         self.c_len = context_length
+        if device == 'auto':
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        else:
+            self.device = device
 
-        self.transformer = minGPT(transformer_config)
+        self.transformer = GPT2Model(transformer_config)
         self.embed_timestep = nn.Embedding(max_ep_len, hidden_size)
         self.embed_return = nn.Linear(1, hidden_size)
         self.embed_state = nn.Linear(state_dim, hidden_size)
@@ -52,12 +64,18 @@ class DecisionTransformer(nn.Module):
 
         stacked_attn_mask = torch.stack(
             (attn_mask, attn_mask, attn_mask), dim=1
-        ).permute(0, 2, 1).reshape(batch_size, 3*seq_len)
+        ).permute(0, 2, 1).reshape(batch_size, 3*seq_len).to(device=self.device)
 
-        logits = self.transformer(
+        # logits = self.transformer(
+        #     inputs_embeds=stacked_inputs,
+        #     attention_mask=stacked_attn_mask,
+        # )
+
+        outputs = self.transformer(
             inputs_embeds=stacked_inputs,
             attention_mask=stacked_attn_mask,
         )
+        logits = outputs['last_hidden_state']
 
         logits = logits.reshape(batch_size, seq_len, 3, self.hidden_size).permute(0, 2, 1, 3)
         action_hidden = logits[:, 2, :, :]
@@ -100,7 +118,7 @@ class DecisionTransformer(nn.Module):
         action_preds = self.forward(
             states, actions, returns_to_go, timesteps, attn_mask=attention_mask, **kwargs)
 
-        return action_preds[0]
+        return action_preds[0, -1]
 
     def configure_optimizers(self, train_config):
         return self.transformer.configure_optimizers(train_config)
