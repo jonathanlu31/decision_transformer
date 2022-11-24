@@ -75,9 +75,9 @@ def train_model(env, model, optimizer, n_iters):
         pickle.dump(trajectories, dataset_file)
     env.close()
 
-def recordTrajectories(env, model, trajectories):
+def recordTrajectories(env, model, trajectories, num_episodes=20):
     with torch.no_grad():
-        for _ in range(20):
+        for _ in range(num_episodes):
             state, _info = env.reset()
             trajectory = {"states": [], "actions": [], "rewards": [], "dones": []}
             for _ in range(200):
@@ -110,9 +110,6 @@ def main():
         print('Please input either test or train and the number of episodes to test')
         return
     
-    wandb.login()
-    wandb.init(project='a2c')
-    wandb.run.name = 'Adam'
 
     num_hidden = 128
     _, run_type, num_episodes = sys.argv
@@ -120,17 +117,30 @@ def main():
 
     if run_type == 'test' and os.path.exists('a2c_model'):
         model = torch.load('a2c_model')
+        testModel(model, int(num_episodes))
+    elif run_type == 'trajectories' and os.path.exists('a2c_model'):
+        model = torch.load('a2c_model')
+        trajectories = []
+        env = gym.make("CartPole-v1")
+        recordTrajectories(env, model, trajectories, int(num_episodes))
+        with open('dataset/traj_dataset_small.pkl', 'wb') as f:
+            pickle.dump(trajectories, f)
+        env.close()
     else:
+        wandb.login()
+        wandb.init(project='a2c')
+        wandb.run.name = 'Adam'
+
         env = gym.make("CartPole-v1")
         state_size = env.observation_space.shape[0]
         action_size = env.action_space.n
+        
         model = ActorCritic(state_size, action_size, num_hidden).to(device)
         optimizer = optim.Adam(model.parameters())
         train_model(env, model, optimizer, 700)
-        env.close()
 
-    # testModel(model, int(num_episodes))
-    wandb.run.finish()
+        env.close()
+        wandb.run.finish()
 
 if __name__ == '__main__':
     main()
