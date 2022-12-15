@@ -32,7 +32,7 @@ class CausalSelfAttention(nn.Module):
         self.n_head = config.n_head
         self.n_embd = config.n_embd
 
-    def forward(self, x):
+    def forward(self, x, mask):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
@@ -43,7 +43,15 @@ class CausalSelfAttention(nn.Module):
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+        if mask is not None:
+            mask = 1 - mask
+            if len(mask.shape) != len(att.shape):
+                assert att[:, 0].shape == mask.shape
+                mask = mask.unsqueeze(dim=1)
+            else:
+                assert att.shape == mask.shape
+            att += -1e9 * mask
+        # att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
         att = F.softmax(att, dim=-1)
         att = self.attn_dropout(att)
         y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
@@ -78,8 +86,8 @@ class Block(nn.Module):
         m = self.mlp
         self.mlpf = lambda x: m.dropout(m.c_proj(m.act(m.c_fc(x)))) # MLP forward
 
-    def forward(self, x):
-        x = x + self.attn(self.ln_1(x))
+    def forward(self, x, mask):
+        x = x + self.attn(self.ln_1(x), mask)
         x = x + self.mlpf(self.ln_2(x))
         return x
 
@@ -183,10 +191,12 @@ class minGPT(nn.Module):
         b, t = inputs_embeds.shape[0], inputs_embeds.shape[1]
         assert t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}"
 
+        attention_mask = self._convert_padding_mask_to_attention_mask(inputs_embeds, attention_mask)
+
         # forward the GPT model itself
         x = self.transformer.drop(inputs_embeds)
         for block in self.transformer.h:
-            x = block(x)
+            x = block(x, attention_mask)
         x = self.transformer.ln_f(x)
 
         # if we are given some desired targets also calculate the loss
@@ -195,6 +205,26 @@ class minGPT(nn.Module):
         #     loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
 
         return x
+
+    @staticmethod
+    def _convert_padding_mask_to_attention_mask(sequence, padding_mask):
+        """Given a padded input tensor of sequences and a boolean mask for each position
+        in the sequence, returns a 3D boolean mask for use in attention.
+
+        Args:
+            sequence (th.Tensor): Tensor of shape [batch_size, sequence_length_1, ndim]
+            padding_mask (th.Tensor[bool]): Tensor of shape [batch_size, sequence_length_2]
+
+        Returns:
+            th.Tensor[bool]: Tensor of shape [batch_size, sequence_length_1, sequence_length_2]
+        """
+        assert padding_mask.shape[0] == sequence.shape[0] and \
+                                                'batch size mismatch between input sequence and  padding_mask'
+        assert len(padding_mask.shape) == 2 and \
+                                                'Can only convert 2D position mask to 3D attention mask'
+
+        attention_mask = padding_mask[:, None, :].repeat(*(1, sequence.shape[1], 1))
+        return attention_mask
 
     @torch.no_grad()
     def generate(self, idx, max_new_tokens, temperature=1.0, do_sample=False, top_k=None):

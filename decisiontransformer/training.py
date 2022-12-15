@@ -1,11 +1,13 @@
 import torch
+import torch.nn as nn
 import numpy as np
 import time
 import gym
 import wandb
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
-from decision_transformer import DecisionTransformer
+# from decision_transformer import DecisionTransformer
+from mlpmodel import FeedForward
 from dataset.trajectory_dataset import TrajectoryDataset
 
 class Trainer:
@@ -21,25 +23,26 @@ class Trainer:
         self.model = self.model.to(self.device)
         print("running on device", self.device)
 
-        self.iter_num = 0
-        self.iter_time = 0.0
-        self.optimizer = torch.optim.AdamW(
+        # self.optimizer = torch.optim.AdamW(
+        #     model.parameters(),
+        #     lr=config["learning_rate"],
+        #     weight_decay=config['weight_decay']
+        # )
+        self.optimizer = torch.optim.Adam(
             model.parameters(),
             lr=config["learning_rate"],
-            weight_decay=config['weight_decay']
         )
-        self.scheduler = torch.optim.lr_scheduler.LambdaLR(
-            self.optimizer,
-            lambda steps: min((steps+1)/config['warmup_steps'], 1)
-        )
+        # self.scheduler = torch.optim.lr_scheduler.LambdaLR(
+        #     self.optimizer,
+        #     lambda steps: min((steps+1)/config['warmup_steps'], 1)
+        # )
         # self.optimizer = self.model.configure_optimizers(config)
+        self.scheduler = None
         self.loss_fn = loss_fn
 
     def train(self):
         model, config = self.model, self.config
         train_losses = []
-        logs = dict()
-        train_start = time.time()
 
         model.train()
         print('train start')
@@ -54,23 +57,28 @@ class Trainer:
 
             batch_losses = []
             for batch_num, sample in enumerate(tqdm(train_loader)):
-                states, actions, returns, dones, timesteps, attn_mask = sample
+                # states, actions, returns, dones, timesteps, attn_mask = sample
+                # states = states.to(dtype=torch.float, device=self.device)
+                # actions = actions.to(dtype=torch.float, device=self.device)
+                # returns = returns.to(dtype=torch.float, device=self.device)
+                # timesteps = timesteps.to(dtype=torch.long, device=self.device)
+                states, actions, returns = sample
                 states = states.to(dtype=torch.float, device=self.device)
                 actions = actions.to(dtype=torch.float, device=self.device)
-                returns = returns.to(dtype=torch.float, device=self.device)
-                timesteps = timesteps.to(dtype=torch.long, device=self.device)
+                # returns = returns.to(dtype=torch.float, device=self.device)
 
                 action_target = torch.clone(actions)
 
 
-                action_preds = self.model.forward(
-                    states, actions, returns, timesteps=timesteps, attn_mask=attn_mask
-                )
+                # action_preds = self.model(
+                #     states, actions, returns, timesteps=timesteps, attn_mask=attn_mask
+                # )
+                action_preds = self.model(states).squeeze()
 
                 loss = self.loss_fn(action_preds, action_target)
-                self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
+                self.optimizer.zero_grad()
                 if self.scheduler is not None:
                     self.scheduler.step()
                 batch_losses.append(loss.detach().cpu().item())
@@ -79,7 +87,6 @@ class Trainer:
             print(np.mean(np.asarray(batch_losses)))
         
         self.train_losses = train_losses
-        logs['time/training'] = time.time() - train_start
 
     def evaluate(self, env, state_mean, state_std, target_return=200):
         model, device = self.model, self.device
@@ -161,15 +168,13 @@ def main():
     #     trainer = Trainer(config, model, train_dataset, loss_fn=lambda a_hat, a: torch.mean((a_hat - a)**2))
     #     trainer.train()
     wandb.login()
-    env = gym.make('CartPole-v0')
+    env = gym.make('CartPole-v1')
     print(torch.cuda.is_available())
 
-    wandb.init(project='decision-transformer')
-    wandb.run.name = 'gpt2-colab-full-clen-20-lr-1e-4'
-    wandb.config = {
-        "learning_rate": 1e-3,
-        "epochs": 500,
-        "batch_size": 64,
+    config = {
+        "learning_rate": 2e-4,
+        "epochs": 100,
+        "batch_size": 256,
         "hidden_size": 64,
         "c_len": 20,
         "device": "auto",
@@ -180,20 +185,23 @@ def main():
         "warmup_steps": 10000,
         "num_workers": 0
     }
-    config = wandb.config
-    env = gym.make('CartPole-v0')
-
+    
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.n
     c_len = config["c_len"]
+    # model = DecisionTransformer(state_dim, action_dim, config["hidden_size"], c_len, 200, True, n_head=1, n_layer=3, n_inner=4*config['hidden_size'],
+    #         activation_function=config['activation_function'],
+    #         n_positions=1024,
+    #         resid_pdrop=config['dropout'],
+    #         attn_pdrop=config['dropout'], device=config["device"])
+    model = FeedForward(state_dim, action_dim, config['hidden_size'])
+    wandb.init(project='decision-transformer')
+    wandb.run.name = 'ff'
+    wandb.config = config
 
-    train_dataset = TrajectoryDataset('dataset', c_len, state_dim, action_dim)
-    model = DecisionTransformer(state_dim, action_dim, config["hidden_size"], c_len, 200, True, n_head=1, n_layer=3, n_inner=4*config['hidden_size'],
-            activation_function=config['activation_function'],
-            n_positions=1024,
-            resid_pdrop=config['dropout'],
-            attn_pdrop=config['dropout'], device=config["device"])
-    trainer = Trainer(config, model, train_dataset, loss_fn=lambda a_hat, a: torch.mean((a_hat - a)**2))
+
+    train_dataset = TrajectoryDataset(c_len, state_dim, action_dim)
+    trainer = Trainer(config, model, train_dataset, loss_fn=nn.BCELoss())
     trainer.train()
     wandb.run.finish()
 

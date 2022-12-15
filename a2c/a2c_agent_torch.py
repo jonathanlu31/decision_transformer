@@ -81,9 +81,9 @@ def recordTrajectories(env, model, trajectories, num_episodes=20):
             state, _info = env.reset()
             trajectory = {"states": [], "actions": [], "rewards": [], "dones": []}
             for _ in range(200):
-                state = torch.from_numpy(np.array(state)).unsqueeze(0).to(device)
+                state = torch.from_numpy(np.array(state)).unsqueeze(0)
                 trajectory["states"].append(state)
-                dist, _ = model(state)
+                dist, _ = model(state.to(device))
                 action = dist.sample()
                 state, reward, done, _truncated, _info = env.step(action.cpu().numpy()[0])
                 trajectory["actions"].append(np.array([1 if i == action else 0 for i in range(env.action_space.n)]))
@@ -123,7 +123,7 @@ def main():
         trajectories = []
         env = gym.make("CartPole-v1")
         recordTrajectories(env, model, trajectories, int(num_episodes))
-        with open('dataset/traj_dataset_small.pkl', 'wb') as f:
+        with open('dataset/traj_dataset_good_large.pkl', 'wb') as f:
             pickle.dump(trajectories, f)
         env.close()
     else:

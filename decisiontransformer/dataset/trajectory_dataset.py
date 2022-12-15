@@ -6,57 +6,52 @@ import numpy as np
 import os
 
 class TrajectoryDataset(Dataset):
-    def __init__(self, base_path, context_len, state_dim, action_dim):
-        # self.base_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), base_path)
+    def __init__(self, context_len, state_dim, action_dim):
         self.c_len = context_len
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.trajectories = []
-        # for i in range(len(os.listdir(self.base_path))):
-        #     interval = i * 150
-        #     path = os.path.join(self.base_path, f'traj_{interval}-{interval + 150}.pkl')
-        #     with open(path, 'rb') as f:
-        #         file_trajectories = pickle.load(f)
-        #     self.trajectories.extend(file_trajectories)
-        #     print(i)
-        path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'trajectories.pkl')
+        path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'traj_dataset_good.pkl')
         with open(path, 'rb') as f:
             self.trajectories = pickle.load(f)
         print('done')
         self.state_mean, self.state_std = self._compute_mean_std()
 
     def __len__(self):
-        return len(self.trajectories)
+        return len(self.trajectories) * 200
+        # return len(self.trajectories)
 
     def __getitem__(self, idx):
-        # interval = (idx // 150) * 150
-        # path = os.path.join(self.base_path, f'traj_{interval}-{interval + 150}.pkl')
-        # with open(path, 'rb') as f:
-        #     file_trajectories = pickle.load(f)
-        # traj = file_trajectories[idx - interval]
-        traj = self.trajectories[idx]
+        # traj = self.trajectories[idx]
+
+        # mask = 1 - np.asarray(traj["dones"])
+        # returns = self._compute_returns(0, traj["rewards"], mask, gamma=1)
+
+        # rand_start = random.randint(0, len(traj['states']) - 1)
+        # s = torch.stack(traj['states'][rand_start:rand_start+self.c_len]).reshape((-1, self.state_dim))
+        # a = np.stack(traj['actions'][rand_start:rand_start+self.c_len]).reshape((-1, self.action_dim))
+        # r = np.stack(returns[rand_start:rand_start+self.c_len]).reshape((-1, 1))
+        # d = np.stack(traj['dones'][rand_start:rand_start+self.c_len])
+        # timesteps = np.arange(rand_start, rand_start+len(s)) # TODO: check if padding cutoff is necessary and if rtg needs padding
+
+        # tlen = s.shape[0]
+        # s = s.cpu()
+        # s = torch.concatenate((torch.zeros((self.c_len - tlen, self.state_dim)), s))
+        # s = (s - self.state_mean) / self.state_std
+        # a = np.concatenate((np.ones((self.c_len - tlen, self.action_dim)) * -10., a))
+        # r = np.concatenate((np.zeros((self.c_len - tlen, 1)), r))
+        # d = np.concatenate((np.ones(self.c_len - tlen) * 2, d))
+        # timesteps = np.concatenate((np.zeros(self.c_len - tlen), timesteps))
+        # mask = np.concatenate((np.zeros(self.c_len - tlen), np.ones(tlen)))
+
+        # return s, a, r, d, timesteps, mask
+        traj_idx = idx // 200
+        traj = self.trajectories[traj_idx]
+        timestep_idx = idx - traj_idx * 200
 
         mask = 1 - np.asarray(traj["dones"])
         returns = self._compute_returns(0, traj["rewards"], mask, gamma=1)
-
-        rand_start = random.randint(0, len(traj['states']) - 1)
-        s = torch.stack(traj['states'][rand_start:rand_start+self.c_len]).reshape((-1, self.state_dim))
-        a = np.stack(traj['actions'][rand_start:rand_start+self.c_len]).reshape((-1, self.action_dim))
-        r = np.stack(returns[rand_start:rand_start+self.c_len]).reshape((-1, 1))
-        d = np.stack(traj['dones'][rand_start:rand_start+self.c_len])
-        timesteps = np.arange(rand_start, rand_start+len(s)) # TODO: check if padding cutoff is necessary and if rtg needs padding
-
-        tlen = s.shape[0]
-        s = s.cpu()
-        s = torch.concatenate((torch.zeros((self.c_len - tlen, self.state_dim)), s))
-        s = (s - self.state_mean) / self.state_std
-        a = np.concatenate((np.ones((self.c_len - tlen, self.action_dim)) * -10., a))
-        r = np.concatenate((np.zeros((self.c_len - tlen, 1)), r))
-        d = np.concatenate((np.ones(self.c_len - tlen) * 2, d))
-        timesteps = np.concatenate((np.zeros(self.c_len - tlen), timesteps))
-        mask = np.concatenate((np.zeros(self.c_len - tlen), np.ones(tlen)))
-
-        return s, a, r, d, timesteps, mask
+        return traj['states'][timestep_idx].cpu(), traj['actions'][timestep_idx], returns[timestep_idx]
 
     def _compute_returns(self, final_value, rewards, masks, gamma=0.99):
         total_reward = final_value

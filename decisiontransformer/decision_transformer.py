@@ -2,7 +2,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import transformers
-# from minGPT.transformer import minGPT
+from minGPT.transformer import minGPT
+from feedforward.mlp import AdaInMLP
 from gpt2 import GPT2Model
 
 class DecisionTransformer(nn.Module):
@@ -15,13 +16,14 @@ class DecisionTransformer(nn.Module):
         #     block_size=context_length * 3,
         #     **kwargs,
         # )
-        transformer_config = transformers.GPT2Config(
-            vocab_size=1,
-            n_embd=hidden_size,
-            n_ctx=context_length * 3,
-            device=device,
-            **kwargs
-        )
+        # transformer_config = transformers.GPT2Config(
+        #     vocab_size=1,
+        #     n_embd=hidden_size,
+        #     n_ctx=context_length * 3,
+        #     device=device,
+        #     **kwargs
+        # )
+        # self.model = AdaInMLP(5, w_in=state_dim, w_h=hidden_size, w_out=2, num_freqs=64)
 
         self.state_dim = state_dim
         self.act_dim = act_dim
@@ -31,56 +33,63 @@ class DecisionTransformer(nn.Module):
         else:
             self.device = device
 
-        self.transformer = GPT2Model(transformer_config)
-        self.embed_timestep = nn.Embedding(max_ep_len, hidden_size)
-        self.embed_return = nn.Linear(1, hidden_size)
+        # self.transformer = minGPT(transformer_config)
+
+        # self.embed_timestep = nn.Embedding(max_ep_len, hidden_size)
+        # self.embed_return = nn.Linear(1, hidden_size)
+        # self.embed_action = nn.Linear(act_dim, hidden_size)
         self.embed_state = nn.Linear(state_dim, hidden_size)
-        self.embed_action = nn.Linear(act_dim, hidden_size)
 
         self.embed_ln = nn.LayerNorm(hidden_size)
         self.predict_action = nn.Sequential(
             *[nn.Linear(hidden_size, act_dim)] + ([nn.Tanh()] if action_tanh else [])
             )
 
-    def forward(self, states, actions, ret_to_go, timesteps, attn_mask=None):
-        batch_size, seq_len = states.shape[0], states.shape[1]
-        if attn_mask is None:
-            attn_mask = torch.ones((batch_size, seq_len), dype=torch.long)
+    # def forward(self, states, actions, ret_to_go, timesteps, attn_mask=None):
+    #     batch_size, seq_len = states.shape[0], states.shape[1]
+    #     if attn_mask is None:
+    #         attn_mask = torch.ones((batch_size, seq_len), dype=torch.long)
 
-        state_embeddings = self.embed_state(states)
-        action_embeddings = self.embed_action(actions)
-        return_embeddings = self.embed_return(ret_to_go)
-        time_embeddings = self.embed_timestep(timesteps)
+    #     state_embeddings = self.embed_state(states)
+    #     action_embeddings = self.embed_action(actions)
+    #     return_embeddings = self.embed_return(ret_to_go)
+    #     time_embeddings = self.embed_timestep(timesteps)
 
-        #dims batch x seq_len x hidden state
-        state_embeddings += time_embeddings
-        action_embeddings += time_embeddings
-        return_embeddings += time_embeddings
+    #     # dims batch x seq_len x hidden state
+    #     state_embeddings += time_embeddings
+    #     action_embeddings += time_embeddings
+    #     return_embeddings += time_embeddings
 
-        stacked_inputs = torch.stack((
-            return_embeddings, state_embeddings, action_embeddings
-        ), dim=1).permute(0, 2, 1, 3).reshape(batch_size, 3*seq_len, self.hidden_size)
-        stacked_inputs = self.embed_ln(stacked_inputs)
+    #     stacked_inputs = torch.stack((
+    #         return_embeddings, state_embeddings, action_embeddings
+    #     ), dim=1).permute(0, 2, 1, 3).reshape(batch_size, 3*seq_len, self.hidden_size)
+    #     stacked_inputs = self.embed_ln(stacked_inputs)
 
-        stacked_attn_mask = torch.stack(
-            (attn_mask, attn_mask, attn_mask), dim=1
-        ).permute(0, 2, 1).reshape(batch_size, 3*seq_len).to(device=self.device)
+    #     stacked_attn_mask = torch.stack(
+    #         (attn_mask, attn_mask, attn_mask), dim=1
+    #     ).permute(0, 2, 1).reshape(batch_size, 3*seq_len).to(device=self.device)
 
-        # logits = self.transformer(
-        #     inputs_embeds=stacked_inputs,
-        #     attention_mask=stacked_attn_mask,
-        # )
+    #     logits = self.transformer(
+    #         inputs_embeds=stacked_inputs,
+    #         attention_mask=stacked_attn_mask,
+    #     )
 
-        outputs = self.transformer(
-            inputs_embeds=stacked_inputs,
-            attention_mask=stacked_attn_mask,
-        )
-        logits = outputs['last_hidden_state']
+    #     # outputs = self.transformer(
+    #     #     inputs_embeds=stacked_inputs,
+    #     #     attention_mask=stacked_attn_mask,
+    #     # )
+    #     # logits = outputs['last_hidden_state']
 
-        logits = logits.reshape(batch_size, seq_len, 3, self.hidden_size).permute(0, 2, 1, 3)
-        action_hidden = logits[:, 2, :, :]
+    #     logits = logits.reshape(batch_size, seq_len, 3, self.hidden_size).permute(0, 2, 1, 3)
+    #     action_hidden = logits[:, 2, :, :]
 
-        action_preds = self.predict_action(action_hidden)
+    #     action_preds = self.predict_action(action_hidden)
+    #     return action_preds
+    def forward(self, state_input, r2g=None):
+        # state_embedding = self.embed_state(state_input)
+        # print(state_input)
+        # print(state_embedding)
+        action_preds = self.mlp(state_input)
         return action_preds
     
     def get_action(self, states, actions, returns_to_go, timesteps, **kwargs):
