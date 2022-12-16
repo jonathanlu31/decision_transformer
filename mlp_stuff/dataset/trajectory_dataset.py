@@ -26,9 +26,8 @@ class TrajectoryDataset(Dataset):
         timestep_idx = idx - traj_idx * 200
 
         mask = 1 - np.asarray(traj["dones"])
-        return np.count_nonzero(mask)
-        # returns = self._compute_returns(0, traj["rewards"], mask, gamma=1)
-        # return traj['states'][timestep_idx].cpu(), traj['actions'][timestep_idx], returns[timestep_idx]
+        returns = self._compute_returns(0, traj["rewards"], mask, gamma=1)
+        return traj['states'][timestep_idx].cpu(), traj['actions'][timestep_idx], returns[timestep_idx]
 
     def _compute_returns(self, final_value, rewards, masks, gamma=0.99):
         total_reward = final_value

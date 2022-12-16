@@ -43,15 +43,15 @@ class CausalSelfAttention(nn.Module):
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-        if mask is not None:
-            mask = 1 - mask
-            if len(mask.shape) != len(att.shape):
-                assert att[:, 0].shape == mask.shape
-                mask = mask.unsqueeze(dim=1)
-            else:
-                assert att.shape == mask.shape
-            att += -1e9 * mask
-        # att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+        # if mask is not None:
+        #     mask = 1 - mask
+        #     if len(mask.shape) != len(att.shape):
+        #         assert att[:, 0].shape == mask.shape
+        #         mask = mask.unsqueeze(dim=1)
+        #     else:
+        #         assert att.shape == mask.shape
+        #     att += -1e9 * mask
+        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
         att = F.softmax(att, dim=-1)
         att = self.attn_dropout(att)
         y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)

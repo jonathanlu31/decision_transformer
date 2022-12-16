@@ -8,6 +8,8 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from mlpmodel import FeedForward
 from dataset.trajectory_dataset import TrajectoryDataset
+import sys
+import os
 
 class Trainer:
     def __init__(self, config, model, datasets, loss_fn):
@@ -102,36 +104,62 @@ class Trainer:
             train_losses.extend(batch_losses)
         
         self.train_losses = train_losses
+        torch.save(model.cpu().state_dict(), 'models/mlp')
 
 
 def main():
     set_seed()
-    wandb.login()
+    _, run_type = sys.argv
     env = gym.make('CartPole-v1')
     print(torch.cuda.is_available())
 
-    config = {
-        "learning_rate": 1e-3,
-        "epochs": 100,
-        "batch_size": 32,
-        "hidden_size": 256,
-        "device": "auto",
+    train_config = {
+        "learning_rate": 2e-4,
+        "epochs": 10,
+        "batch_size": 256,
         "weight_decay": 1e-4,
+        "warmup_steps": 10000,
         "num_workers": 0
     }
+
+    model_config = {
+        "hidden_size": 64,
+        "device": "auto",
+    }
+
+    full_config = {**train_config, **model_config}
     
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.n
-    model = FeedForward(state_dim, action_dim, config['hidden_size'])
-    wandb.init(project='decision-transformer')
-    wandb.run.name = 'ff'
-    wandb.config = config
+    model = FeedForward(state_dim, action_dim, model_config['hidden_size'])
 
-    ds = TrajectoryDataset(None, state_dim, action_dim)
-    train_ds, valid_ds = torch.utils.data.random_split(ds, [0.7, 0.3])
-    trainer = Trainer(config, model, (train_ds, valid_ds), loss_fn=nn.BCELoss())
-    trainer.train()
-    wandb.run.finish()
+    if run_type == 'eval' and os.path.exists('models/mlp'):
+        model.load_state_dict(torch.load('models/mlp'))
+    else:
+        wandb.login()
+        wandb.init(project='decision-transformer')
+        wandb.config = full_config
+        wandb.run.name = 'ff'
+
+        ds = TrajectoryDataset(None, state_dim, action_dim)
+        train_ds, valid_ds = torch.utils.data.random_split(ds, [0.7, 0.3])
+        trainer = Trainer(full_config, model, (train_ds, valid_ds), loss_fn=nn.BCELoss())
+        trainer.train()
+        wandb.run.finish()
+
+    testModel(model.cpu(), 5)
+
+def testModel(model, num_episodes):
+    env = gym.make("CartPole-v1", render_mode='human')
+    with torch.no_grad():
+        for _ in range(num_episodes):
+            state, _info = env.reset()
+            for _ in range(200):
+                state = torch.FloatTensor(state).unsqueeze(0).cpu()
+                dist, _ = torch.distributions.Categorical(model(state))
+                action = dist.sample()
+                state, _reward, _done, _truncated, _info = env.step(action.cpu().numpy()[0])
+    env.close()
 
 def set_seed(seed: int = 42) -> None:
     np.random.seed(seed)

@@ -30,7 +30,6 @@ model = DecisionTransformer(state_dim, action_dim, config["hidden_size"], c_len,
         resid_pdrop=config['dropout'],
         attn_pdrop=config['dropout'], device=config["device"])
 
-train_dataset = TrajectoryDataset(c_len, state_dim, action_dim)
-s, a, r = train_dataset[0]
-a_pred = model(s.unsqueeze(0))
-print(a_pred)
+# train_dataset = TrajectoryDataset(c_len, state_dim, action_dim)
+# print(len(train_dataset))
+torch.save(model.state_dict(), 'models/mingpt')

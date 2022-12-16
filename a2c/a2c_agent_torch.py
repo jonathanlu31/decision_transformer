@@ -24,12 +24,6 @@ def train_model(env, model, optimizer, n_iters):
         values = []
         rewards = []
         masks = []
-        # traj_number = episode * 30
-        # if traj_number != 0 and traj_number % 150 == 0:
-        #     with open(f"dataset/traj_{traj_number - 150}-{traj_number}.pkl", "wb") as dataset_file:
-        #         pickle.dump(trajectories, dataset_file)
-        #     trajectories = []
-        # recordTrajectories(env, model, trajectories)
         recordTrajectories(env, model, trajectories)
         state, _info = env.reset()
 
