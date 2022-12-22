@@ -27,7 +27,7 @@ class CausalSelfAttention(nn.Module):
         # mask = np.array([np.hstack((np.ones(3 * i - 1), np.zeros(actual_seq_len - (3 * i - 1)))) for i in range(1, config.block_size + 1)])
         # print(mask.shape)
         mask = torch.tril(torch.ones(actual_seq_len, actual_seq_len))
-        mask = torch.tensor(mask).view(1, 1, actual_seq_len, actual_seq_len)
+        mask = mask.clone().detach().view(1, 1, actual_seq_len, actual_seq_len)
         self.register_buffer("bias", mask)
         self.n_head = config.n_head
         self.n_embd = config.n_embd
@@ -43,16 +43,19 @@ class CausalSelfAttention(nn.Module):
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-        # if mask is not None:
-        #     mask = 1 - mask
-        #     if len(mask.shape) != len(att.shape):
-        #         assert att[:, 0].shape == mask.shape
-        #         mask = mask.unsqueeze(dim=1)
-        #     else:
-        #         assert att.shape == mask.shape
-        #     att += -1e9 * mask
+        if mask is not None:
+            mask = 1 - mask
+            if len(mask.shape) != len(att.shape):
+                assert att[:, 0].shape == mask.shape
+                mask = mask.unsqueeze(dim=1)
+            else:
+                assert att.shape == mask.shape
+            att += -1e9 * mask
+        # print(att)
+        # print('====')
         att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
         att = F.softmax(att, dim=-1)
+        # print(att)
         att = self.attn_dropout(att)
         y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
@@ -220,10 +223,8 @@ class minGPT(nn.Module):
         """
         assert padding_mask.shape[0] == sequence.shape[0] and \
                                                 'batch size mismatch between input sequence and  padding_mask'
-        assert len(padding_mask.shape) == 2 and \
-                                                'Can only convert 2D position mask to 3D attention mask'
 
-        attention_mask = padding_mask[:, None, :].repeat(*(1, sequence.shape[1], 1))
+        attention_mask = padding_mask.transpose(-1, -2) @ padding_mask
         return attention_mask
 
     @torch.no_grad()

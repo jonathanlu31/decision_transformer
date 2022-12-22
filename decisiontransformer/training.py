@@ -10,6 +10,8 @@ from decision_transformer import DecisionTransformer
 from dataset.trajectory_dataset import TrajectoryDataset
 import sys
 import os
+import pickle
+import random
 
 class Trainer:
     def __init__(self, config, model, train_dataset, loss_fn):
@@ -70,6 +72,8 @@ class Trainer:
                     states, actions, returns, timesteps=timesteps, attn_mask=attn_mask
                 )
 
+                action_preds = action_preds.reshape(-1, 1)[attn_mask.reshape(-1) > 0]
+                action_target = action_target.reshape(-1, 1)[attn_mask.reshape(-1) > 0]
                 loss = self.loss_fn(action_preds, action_target)
                 loss.backward()
                 self.optimizer.step()
@@ -81,7 +85,7 @@ class Trainer:
             print(np.mean(np.asarray(batch_losses)))
         
         self.train_losses = train_losses
-        torch.save(model.cpu().state_dict(), 'models/mingpt')
+        torch.save(model.cpu().state_dict(), 'models/gpt2_with_pad')
 
     @staticmethod
     def evaluate(model, env, state_mean, state_std, device, target_return=200):
@@ -90,12 +94,12 @@ class Trainer:
 
         model.eval()
         model.to(device=device)
-        state_dim, act_dim = env.observation_space.shape[0], env.action_space.n
+        state_dim, act_dim = env.observation_space.shape[0], 1
 
         state_mean = state_mean.to(device=device)
         state_std = state_std.to(device=device)
 
-        state = env.reset()
+        state, _info = env.reset()
 
         # we keep all the histories on the device
         # note that the latest action and reward will be "padding"
@@ -103,10 +107,10 @@ class Trainer:
         actions = torch.zeros((0, act_dim), device=device, dtype=torch.float32)
         ret_to_go = torch.zeros(1, device=device, dtype=torch.float32)
         ret_to_go[0] = target_return
-        timesteps = torch.from_numpy(np.arange(200)).to(device=device, dtype=torch.float32)
+        timesteps = torch.zeros(1, device=device, dtype=torch.float32)
 
         episode_return, episode_length = 0, 0
-        for t in timesteps:
+        for i in range(200):
 
             # add padding
             actions = torch.cat([actions, torch.zeros((1, act_dim), device=device)], dim=0)
@@ -118,14 +122,18 @@ class Trainer:
                 ret_to_go.to(dtype=torch.float32),
                 timesteps
             )
-            action = action.detach().cpu().numpy()
-            env_action = np.argmax(action)
+            action = action.detach().cpu()
+            env_action = (1 if action > 0.5 else 0)
+            print(action)
+            print(env_action)
             state, reward, done, _truncated, _info = env.step(env_action)
 
             cur_state = torch.from_numpy(state).to(device=device).reshape(1, state_dim)
             states = torch.cat([states, cur_state], dim=0)
             ret_to_go = torch.cat([ret_to_go, torch.zeros(1, device=device)])
             ret_to_go[-1] = ret_to_go[-2] - reward
+            actions[-1] = env_action
+            timesteps = torch.cat([timesteps, torch.tensor([i+1], device=device)])
 
             episode_return += reward
             episode_length += 1
@@ -138,12 +146,13 @@ class Trainer:
 
 def main():
     _, run_type = sys.argv
+    set_seed()
     env = gym.make('CartPole-v1')
     print(torch.cuda.is_available())
 
     train_config = {
         "learning_rate": 2e-4,
-        "epochs": 30,
+        "epochs": 15,
         "batch_size": 256,
         "weight_decay": 1e-4,
         "betas": (0.9, 0.999),
@@ -168,8 +177,8 @@ def main():
             resid_pdrop=model_config['dropout'],
             attn_pdrop=model_config['dropout'], device=model_config["device"])
 
-    if run_type == 'eval' and os.path.exists('models/mingpt'):
-        model.load_state_dict(torch.load('models/mingpt'))
+    if run_type == 'eval' and os.path.exists('models/gpt2_with_pad'):
+        model.load_state_dict(torch.load('models/gpt2_with_pad'))
     else:
         wandb.login()
         wandb.init(project='decision-transformer')
@@ -178,11 +187,24 @@ def main():
 
 
         train_dataset = TrajectoryDataset(c_len, state_dim, action_dim)
-        trainer = Trainer(full_config, model, train_dataset, loss_fn=lambda a_pred, a_target: torch.mean((a_pred - a_target) ** 2))
+        trainer = Trainer(full_config, model, train_dataset, loss_fn=nn.BCELoss())
         trainer.train()
         wandb.run.finish()
+    env.close()
 
-    Trainer.evaluate(model, env, train_dataset.state_mean, train_dataset.state_std, full_config['device'])
+    test_env = gym.make('CartPole-v1', render_mode='human')
+    with open('dataset/trajectories_metadata.pkl', 'rb') as f:
+        ds_mean, ds_std = pickle.load(f)
+
+    print(Trainer.evaluate(model, test_env, ds_mean, ds_std, full_config['device']))
+    test_env.close()
+
+def set_seed(seed: int = 42) -> None:
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    print(f"Random seed set as {seed}")
 
 if __name__ == '__main__':
     main()
