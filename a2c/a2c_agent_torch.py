@@ -80,7 +80,7 @@ def recordTrajectories(env, model, trajectories, num_episodes=20):
                 dist, _ = model(state.to(device))
                 action = dist.sample()
                 state, reward, done, _truncated, _info = env.step(action.cpu().numpy()[0])
-                trajectory["actions"].append(np.array([1 if i == action else 0 for i in range(env.action_space.n)]))
+                trajectory["actions"].append(action)
                 trajectory["rewards"].append(reward)
                 trajectory["dones"].append(done)
             trajectories.append(trajectory)
