@@ -11,7 +11,7 @@ class TrajectoryDataset(Dataset):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.trajectories = []
-        path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'traj_dataset_good.pkl')
+        path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'trajectories.pkl')
         with open(path, 'rb') as f:
             self.trajectories = pickle.load(f)
         print('done')

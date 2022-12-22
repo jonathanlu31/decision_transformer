@@ -26,15 +26,15 @@ class Trainer:
         self.model = self.model.to(self.device)
         print("running on device", self.device)
 
-        # self.optimizer = torch.optim.AdamW(
-        #     model.parameters(),
-        #     lr=config["learning_rate"],
-        #     weight_decay=config['weight_decay']
-        # )
-        self.optimizer = torch.optim.Adam(
+        self.optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=config["learning_rate"],
+            weight_decay=config['weight_decay']
         )
+        # self.optimizer = torch.optim.Adam(
+        #     model.parameters(),
+        #     lr=config["learning_rate"],
+        # )
         # self.scheduler = torch.optim.lr_scheduler.LambdaLR(
         #     self.optimizer,
         #     lambda steps: min((steps+1)/config['warmup_steps'], 1)
@@ -85,7 +85,7 @@ class Trainer:
             print(np.mean(np.asarray(batch_losses)))
         
         self.train_losses = train_losses
-        torch.save(model.cpu().state_dict(), 'models/gpt2_with_pad')
+        torch.save(model.cpu().state_dict(), 'models/mingpt_pad_action')
 
     @staticmethod
     def evaluate(model, env, state_mean, state_std, device, target_return=200):
@@ -124,8 +124,6 @@ class Trainer:
             )
             action = action.detach().cpu()
             env_action = (1 if action > 0.5 else 0)
-            print(action)
-            print(env_action)
             state, reward, done, _truncated, _info = env.step(env_action)
 
             cur_state = torch.from_numpy(state).to(device=device).reshape(1, state_dim)
@@ -152,8 +150,8 @@ def main():
 
     train_config = {
         "learning_rate": 2e-4,
-        "epochs": 15,
-        "batch_size": 256,
+        "epochs": 100,
+        "batch_size": 64,
         "weight_decay": 1e-4,
         "betas": (0.9, 0.999),
         "warmup_steps": 10000,
@@ -177,8 +175,8 @@ def main():
             resid_pdrop=model_config['dropout'],
             attn_pdrop=model_config['dropout'], device=model_config["device"])
 
-    if run_type == 'eval' and os.path.exists('models/gpt2_with_pad'):
-        model.load_state_dict(torch.load('models/gpt2_with_pad'))
+    if run_type == 'eval' and os.path.exists('models/mingpt_pad_action'):
+        model.load_state_dict(torch.load('models/mingpt_pad_action'))
     else:
         wandb.login()
         wandb.init(project='decision-transformer')
@@ -192,7 +190,7 @@ def main():
         wandb.run.finish()
     env.close()
 
-    test_env = gym.make('CartPole-v1', render_mode='human')
+    test_env = gym.make('CartPole-v1')
     with open('dataset/trajectories_metadata.pkl', 'rb') as f:
         ds_mean, ds_std = pickle.load(f)
 

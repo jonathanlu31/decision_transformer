@@ -124,7 +124,6 @@ class DecisionTransformer(nn.Module):
         action_preds = self.forward(
             states, actions, returns_to_go, timesteps, attn_mask=attention_mask, **kwargs)
 
-        print(action_preds.shape)
         return action_preds[0, seq_len - 1]
 
     def configure_optimizers(self, train_config):
