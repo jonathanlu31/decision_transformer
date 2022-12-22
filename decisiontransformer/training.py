@@ -85,7 +85,7 @@ class Trainer:
             print(np.mean(np.asarray(batch_losses)))
         
         self.train_losses = train_losses
-        torch.save(model.cpu().state_dict(), 'models/mingpt_pad_action')
+        torch.save(model.cpu().state_dict(), 'models/mingpt_adamw')
 
     @staticmethod
     def evaluate(model, env, state_mean, state_std, device, target_return=200):
@@ -175,8 +175,8 @@ def main():
             resid_pdrop=model_config['dropout'],
             attn_pdrop=model_config['dropout'], device=model_config["device"])
 
-    if run_type == 'eval' and os.path.exists('models/mingpt_pad_action'):
-        model.load_state_dict(torch.load('models/mingpt_pad_action'))
+    if run_type == 'eval' and os.path.exists('models/mingpt_adamw'):
+        model.load_state_dict(torch.load('models/mingpt_adamw'))
     else:
         wandb.login()
         wandb.init(project='decision-transformer')
